@@ -11,42 +11,39 @@ from googleapiclient.discovery import build
 SPREADSHEET_NAME = "inversion"
 DESTINY_SHEET_NAME = "Organizado"
 ORIGIN_SHEET_NAME = "movimientos"
-SPREADSHEET_ID = ""
+service = ""
+spreadsheet_id = ""
+
 
 def create_spread():
+    # global variables for other methods
+    global spreadsheet_id, service
+
     # create credentials from local file
     scope = ["https://spreadsheets.google.com/feeds", 'https://www.googleapis.com/auth/spreadsheets',
              "https://www.googleapis.com/auth/drive.file", "https://www.googleapis.com/auth/drive"]
     credential = ServiceAccountCredentials.from_json_keyfile_name("credential.json", scope)
-
     # create path
     path = os.getcwd()
     filename = "credential.json"
     path_file = conf.get_config(path, filename)
     # create spread objets from credentail, open origin spread and sheet.
     spread = Spread(creds=credential, spread=SPREADSHEET_NAME, config=path_file, sheet=ORIGIN_SHEET_NAME)
+    spread.add_permission()
 
-    # create client mode for recovery id
-    client = Client(creds=credential, scope=scope)
-    # recover list of dictionaries
-    list_dicts = client.list_spreadsheet_files()
-    # iterate all spreadsheets created by credencial user
-    for dict in list_dicts:
-        print(dict)
-        name = dict.get("name")
-        if name == SPREADSHEET_NAME:
-            spreadsheet_id = dict.get("id")
-            print("el id del sp es: {}".format(spreadsheet_id))
-    SPREADSHEET_ID = spreadsheet_id
-
-    # create SERVICE to create json request
+    # start client mode and create SERVICE to send json request, before that get ID
+    client = gspread.authorize(credential)
+    inversion_book = client.open(SPREADSHEET_NAME)
+    spreadsheet_id = inversion_book.id
     service = build('sheets', 'v4', credentials=credential)
-    return spread, service
+    return spread
 
 
 def main():
     # create spread objet con id
-    spread, service = create_spread()
+    spread = create_spread()
+
+    print("id: {}".format(spreadsheet_id))
 
     # create dataframe form loaded spreadsheet
     df = spread.sheet_to_df(index=0)
@@ -111,11 +108,13 @@ def main():
     )
     format_cell_range(worksheet=destiny_sheet, name="C2:G100", cell_format=currency_format)
 
-    updateDimension(destiny_sheet, 'cols', 260, "A:B", service)
-    updateDimension(destiny_sheet, 'cols', 160, "C:G", service)
+    updateDimension(destiny_sheet, 'cols', 260, "A:B")
+    updateDimension(destiny_sheet, 'cols', 160, "C:G")
+    updateDimension(destiny_sheet, 'rows', 35, "A1:G1")
+    updateDimension(destiny_sheet, 'rows', 25, "A2:G100")
 
 
-def updateDimension(worksheet, element, pixels, rango, service):
+def updateDimension(worksheet, element, pixels, rango):
     # TEST PATTERN
     # rango = "A1"
     # a, b, c, d = get_index_from_range(rango)
@@ -140,6 +139,8 @@ def updateDimension(worksheet, element, pixels, rango, service):
     # rango = "1"
     # a, b, c, d = get_index_from_range(rango)
     # print("{} sci: {} sri:{} eci:{} eri:{}".format(rango, a, b, c, d))
+    # global variables from create spread
+    global service, spreadsheet_id
 
     startcolumn, startrow, endcolumn, endrow = get_index_from_range(rango)
 
@@ -174,7 +175,7 @@ def updateDimension(worksheet, element, pixels, rango, service):
             }
         ]
     }
-    request = service.spreadsheets().batchUpdate(spreadsheetId=SPREADSHEET_ID, body=req)
+    request = service.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body=req)
     response = request.execute()
     print(response)
 
@@ -352,7 +353,7 @@ def iterarMeses(dataframe):
                 saldo_inicial_mensual = suma
                 # print("saldo mensual inicial: {:.2f}".format(saldo_inicial_mensual))
                 # crear dataframe temporal
-                d = {"saldo inicial": [saldo_inicial_mensual], "Fecha": [date]}
+                d = {"Descripción": ["Saldo Inicial"], "saldo inicial": [saldo_inicial_mensual], "Fecha": [date]}
                 temp = pd.DataFrame(data=d)
                 nuevo_df = nuevo_df.append(temp)
 
@@ -367,7 +368,7 @@ def iterarMeses(dataframe):
         # AGREGAR EL QUERY AL NUEVO DATA FRAME Y AGREGAR SALDO FINAL
         nuevo_df = nuevo_df.append(filtro)
         # crear dataframe temporal
-        d = {"saldo final": [suma], "Fecha": [date]}
+        d = {"Descripción": ["Saldo final"], "saldo final": [suma], "Fecha": [date]}
         temp = pd.DataFrame(data=d)
         # print(temp)
         nuevo_df = nuevo_df.append(temp)
