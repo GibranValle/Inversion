@@ -360,6 +360,320 @@ reqs = {
     }
 
 
+def organizeData(dataframe):
+    # AÑO | MES | MOVIMIENTO | ABONOS | RETIROS | Fecha inicial | Fecha final | Dias | Dias del mes
+    fecha = pd.to_datetime(dataframe.Fecha, dayfirst=True)
+    dataframe["año"] = fecha.dt.year
+    dataframe["mes"] = fecha.dt.month
+    dataframe["dia"] = fecha.dt.day
+    dataframe["dias_al_mes"] = fecha.dt.days_in_month
+    dataframe["dias_efectivos"] = dataframe["dias_al_mes"] - dataframe["dia"]
+    # para calcular el inicio y fin de mes
+    dataframe["inicio_de_mes"] = fecha.dt.strftime("01/%m/%Y")
+    dataframe["fin_de_mes"] = (fecha + MonthEnd(0)).dt.strftime("%d/%m/%Y")
+    dataframe["montos"] = dataframe["Monto"].str.replace('[\$,]', '', regex=True).astype(float)
+    dataframe["saldo_promedio"] = dataframe["montos"] * dataframe["dias_efectivos"]
+
+    # contiene Deposito
+    deposito = dataframe["Descripción"].str.contains("Dep|Abono").map({True: "Deposito"}).dropna()
+    rendimiento = dataframe["Descripción"].str.contains("Rendi|intereses").map({True: "Rendimiento"}).dropna()
+    pago = dataframe["Descripción"].str.contains("inversion|capital").map({True: "Pagos"}).dropna()
+    retiro = dataframe["Descripción"].str.contains("Retiro").map({True: "Retiro"}).dropna()
+    inversion = dataframe["Descripción"].str.contains("Inver").map({True: "Inversion"}).dropna()
+    # print(deposito, rendimiento, retiro, pago)
+
+    serie = [deposito, rendimiento, pago, retiro, inversion]
+    tipo = pd.concat(serie).sort_index()
+    dataframe["tipo"] = tipo
+
+    dataframe["abonos"] = dataframe.query("tipo != 'Retiro' and tipo != 'Inversion'")["Monto"]
+    dataframe["retiros"] = dataframe.query("tipo == 'Retiro'")["Monto"]
+    dataframe["inversion"] = dataframe.query("tipo == 'Inversion'")["Monto"]
+    dataframe.fillna(0, inplace=True)
+
+
+
+
+def main():
+    """
+    Creates a sheet with 7 columns, and creates some formats
+    :return: NONE
+    """
+    # create spread objet con id
+    spread = create_spread()
+
+    print("id: {}".format(spreadsheet_id))
+
+    # create dataframe form loaded spreadsheet
+    df = spread.sheet_to_df(index=0)
+    print("Data frame from sheet:")
+    print(df.head())
+
+    # structure new dataframe
+    organizeData(df)
+    # create a new dataframe to export into destiny sheet
+    new_df = createNewDataFrame(df)
+    # create new sheet is does not exist
+    spread.df_to_sheet(
+        df=new_df,
+        index=False,
+        sheet=DESTINY_SHEET_NAME,
+        start="A1",
+        replace=True
+    )
+    # get sheet objet to recover id in format function
+    destiny_sheet = spread.find_sheet(DESTINY_SHEET_NAME)
+
+    # formatting
+    header_format = CellFormat(
+        backgroundColor=Color(0.7, 0.7, 0.7),
+        textFormat=TextFormat(
+            fontFamily="verdana",
+            fontSize=14,
+            bold=True,
+            foregroundColor=Color(1, 1, 1)
+        ),
+        wrapStrategy="CLIP",
+        horizontalAlignment='CENTER',
+        verticalAlignment="MIDDLE"
+    )
+    format_cell_range(worksheet=destiny_sheet, name="1", cell_format=header_format)
+
+    content_format = CellFormat(
+        textFormat=TextFormat(
+            fontFamily="verdana",
+            fontSize=12,
+            bold=False,
+            foregroundColor=Color(0, 0, 0)
+        ),
+    )
+    format_cell_range(worksheet=destiny_sheet, name="A2:G100", cell_format=content_format)
+
+    date_format = CellFormat(
+        numberFormat=NumberFormat
+            (
+            type="DATE",
+            pattern="dddd, dd mmmm yyyy"
+        ),
+    )
+    format_cell_range(worksheet=destiny_sheet, name="A2:A100", cell_format=date_format)
+
+    currency_format = CellFormat(
+        numberFormat=NumberFormat
+            (
+            type="CURRENCY",
+            pattern="$#,###,###,##0.00"
+        ),
+    )
+    format_cell_range(worksheet=destiny_sheet, name="C2:G100", cell_format=currency_format)
+
+    # updateDimension(destiny_sheet, 'cols', 260, "A:B")
+    # updateDimension(destiny_sheet, 'cols', 160, "C:G")
+    # updateDimension(destiny_sheet, 'rows', 35, "A1:G1")
+    # updateDimension(destiny_sheet, 'rows', 25, "A2:G100")
+
+    # PAINT ALL ROWS THAT CONTAINS SALDO FINAL IN B COLUMN
+    # formula = '=$B1="Saldo final"'
+    # rango_formula = "A1:G100"
+    # bg_color = (0.8, 0.9, 1)    # RGB
+    # fg_color = (0, 0, 0)  # RGB
+    # conditionalFormattingFormula(destiny_sheet, formula, rango_formula, bg_color, fg_color)
+
+    # formula = '=$B1="Saldo inicial"'
+    # bg_color = (0.88, 0.93, 0.85)  # RGB
+    # conditionalFormattingFormula(destiny_sheet, formula, rango_formula, bg_color, fg_color)
+
+
+
+def createNewDataFrame(dataframe):
+    # crear un nuevo dataframe
+    nuevas_columnas = ["saldo inicial", "saldo final"]
+    nuevo_df = pd.DataFrame(index=range(0), columns=nuevas_columnas)
+
+    # buscar el nombre del mes en el diccionario
+    dict_of_df = {}
+    nombre_meses = {
+        1: "Enero",
+        2: "Febero",
+        3: "Marzo",
+        4: "Abril",
+        5: "Mayo",
+        6: "Junio",
+        7: "Julio",
+        8: "Agosto",
+        9: "Septiembre",
+        10: "Octubre",
+        11: "Noviembre",
+        12: "Diciembre"
+    }
+    # empezar con los meses
+    dataframe["mes"] = dataframe["mes"].map(nombre_meses)
+    meses = dataframe["mes"]
+    set_meses = uniqueValues(meses)
+    index = 0
+    saldo_inicial_mensual = 0
+    # iterar por los meses unicos
+    for mes in set_meses:
+        # hacer un query para sub iterar solo en los meses iterados
+        query = "mes == '{}'".format(mes)
+        busqueda = dataframe.query(query)
+        filtro = busqueda[["Fecha", 'Descripción', "montos", "abonos", "retiros", "inversion"]]
+        # print(filtro)
+        largo = len(busqueda.mes)
+        for subindex in range(largo):
+            # calcular el indice del dataframe global
+            superindex = subindex + index
+            # print(superindex)
+            # encontrar el valor de cada celda iterada en el superindex
+            date = busqueda.Fecha[superindex]
+            saldo = busqueda.montos[superindex]
+
+            if subindex == 0 and superindex != 0:
+                saldo_inicial_mensual = suma
+                # print("saldo mensual inicial: {:.2f}".format(saldo_inicial_mensual))
+                # crear dataframe temporal
+                d = {"Descripción": ["Saldo inicial"], "saldo inicial": [saldo_inicial_mensual], "Fecha": [date]}
+                temp = pd.DataFrame(data=d)
+                nuevo_df = nuevo_df.append(temp)
+
+        # sumar para calcular saldo final de mes
+        suma = sum(busqueda.montos) + saldo_inicial_mensual
+        # print("saldo mensual final: {:.2f}".format(suma))
+        # print()
+
+        # cambiar el valor de index para calcular el superindex
+        index += largo
+
+        # AGREGAR EL QUERY AL NUEVO DATA FRAME Y AGREGAR SALDO FINAL
+        nuevo_df = nuevo_df.append(filtro)
+        # crear dataframe temporal
+        d = {"Descripción": ["Saldo final"], "saldo final": [suma], "Fecha": [date]}
+        temp = pd.DataFrame(data=d)
+        # print(temp)
+        nuevo_df = nuevo_df.append(temp)
+
+    # print(nuevo_df)
+    nuevo_df.reset_index(drop=True, inplace=True)
+    nuevo_df.fillna(0, inplace=True)
+    # reorganizar columnas
+    cols_organizadas = [
+        "Fecha",
+        "Descripción",
+        "abonos",
+        "retiros",
+        "inversion",
+        "saldo inicial",
+        "saldo final"
+    ]
+    nuevo_df = nuevo_df[cols_organizadas]
+    nuevo_df["abonos"] = nuevo_df["abonos"].str.replace('[\$,]', '', regex=True)
+    nuevo_df["retiros"] = nuevo_df["retiros"].str.replace('[\$,]', '', regex=True)
+    nuevo_df["inversion"] = nuevo_df["inversion"].str.replace('[\$,]', '', regex=True)
+    nuevo_df["saldo inicial"] = nuevo_df["saldo inicial"].astype(float)
+    nuevo_df["saldo final"] = nuevo_df["saldo final"].astype(float)
+    nuevo_df.fillna(0, inplace=True)
+    # print(nuevo_df.abonos)
+
+    nuevo_df["abonos"] = pd.to_numeric(nuevo_df["abonos"])
+    nuevo_df["retiros"] = pd.to_numeric(nuevo_df["retiros"])
+    nuevo_df["inversion"] = pd.to_numeric(nuevo_df["inversion"])
+    # print(nuevo_df.abonos)
+
+    # print(nuevo_df)
+    return nuevo_df
+
+    # # iterar por meses y contar cuantos rows tienen el mismo mes
+    # mes_anterior = ""
+    # conteo = 0
+    # key = 0
+    # for index, mes in enumerate(meses):
+    #     if mes != mes_anterior:
+    #         if index != 0:
+    #             key += 1
+    #             name = "new_df_" + str(key)
+    #             print("{} crear dataframe de: {} rows".format(name, conteo))
+    #             dict_of_df.update({name: pd.DataFrame(index=range(0, conteo), columns=[])})
+    #         conteo = 1
+    #         mes_anterior = mes
+    #         print()
+    #         print("nuevo mes encontrado, {}".format(mes))
+    #         print("mes: {} conteo: {} index: {}".format(mes, conteo, index))
+    #     else:
+    #         conteo += 1
+    #         print("mes: {} conteo: {} index: {}".format(mes, conteo, index))
+    #         if index == len(meses)-1:
+    #             key += 1
+    #             name = "new_df_" + str(key)
+    #             print("{} crear dataframe de: {} rows".format(name, conteo))
+    #             dict_of_df.update({name: pd.DataFrame(index=range(0, conteo), columns=[])})
+    #
+    # # acceder al dataframe desde el diccionario
+    # dict_of_df.get("new_df_1")["Mes"] = meses
+    # print(dict_of_df.get("new_df_1")["Mes"])
+
+
+def conditionalFormattingConstains(worksheet, text, rango):
+    global service, spreadsheet_id
+    startcolumn, startrow, endcolumn, endrow = get_index_from_range(rango)
+    print(startcolumn,endcolumn, startrow, endrow)
+    req = {
+        "requests":
+            [
+                {
+                    "addConditionalFormatRule":
+                    {
+                        "rule":
+                        {
+                            "ranges":
+                            [{
+                                "sheetId": worksheet.id,
+                                "startRowIndex": startrow,
+                                "endRowIndex": endrow,
+                                "startColumnIndex": startcolumn,
+                                "endColumnIndex": endcolumn,
+                            }],
+                            "booleanRule":
+                            {
+                                "condition":
+                                    {
+                                        "type": "TEXT_CONTAINS",
+                                        "values":
+                                            [{
+                                                "userEnteredValue": text
+                                            }]
+                                    },
+                                "format":
+                                {
+                                    "textFormat":
+                                    {
+                                        "bold": True,
+                                        "italic": True,
+                                        "foregroundColor":
+                                        {
+                                            "red": 0.8,
+                                            "green": 0.2,
+                                            "blue": 0.0
+                                        }
+                                    },
+                                    "backgroundColor":
+                                    {
+                                        "red": 0.8,
+                                        "green": 0.2,
+                                        "blue": 0.0
+                                    },
+
+                                }
+                            },
+                        }
+                    }
+                }
+            ]
+    }
+    request = service.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body=req)
+    response = request.execute()
+    print(response)
+
+
 def crear_compartir(gc):
     # crear y compartir sheet
     inversion = gc.create('Defecto')
