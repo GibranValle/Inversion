@@ -145,7 +145,6 @@ def create_math_sheet():
 
 
 
-
 def create_spread():
     # global variables for other methods
     global spreadsheet_id, service
@@ -459,6 +458,7 @@ def createMathDataFrame(dataframe):
         for subindex in range(size):
             # stimate the index value from iteration and sub iteration
             superindex = subindex + index
+
             # find single values from superindex row
             # values for created rows
             date = dataframe["Fecha"][superindex]
@@ -508,21 +508,22 @@ def createMathDataFrame(dataframe):
                 initial_balance = total
                 initial_balance_avg = total*days/all_days
 
-            else:       # create other long rows, ingresos y egresos
-                # THIS IS THE INITIAL ORDER OF THE COLUMNS
-                d = {
-                    "mes": [month],
-                    "movimiento": [name],
-                    "tasa": [""],
-                    "ingresos": [income],
-                    "egresos": [outcome],
-                    "fecha inicial": [date],
-                    "fecha final": [final_date],
-                    #"dias": [days],
-                    #"dias al mes": [all_days]
-                }
-                temp = pd.DataFrame(data=d)
-                new_df = new_df.append(temp)
+            # create other long rows, ingresos y egresos
+            # THIS IS THE INITIAL ORDER OF THE COLUMNS
+            d = {
+                "mes": [month],
+                "movimiento": [name],
+                "tasa": [""],
+                "ingresos": [income],
+                "egresos": [outcome],
+                "fecha inicial": [date],
+                "fecha final": [final_date],
+                #"dias": [days],
+                #"dias al mes": [all_days]
+            }
+            temp = pd.DataFrame(data=d)
+            new_df = new_df.append(temp)
+            #print("\nFINAL:",new_df)
 
         # sum
         index += size
